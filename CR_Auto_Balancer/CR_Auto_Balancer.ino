@@ -45,18 +45,18 @@ const uint8_t handler_index = 0;
 /*******************************************************************************
 * PID loop
 *******************************************************************************/
-double DistL_Kp = 2.00*0.01; 
+double DistL_Kp = 5.00*0.01; 
 double DistL_Ki = 0.00*0.01; 
 double DistL_Kd = 0.00*0.01; 
-double DistR_Kp = 2.00*0.01; 
+double DistR_Kp = 5.00*0.01; 
 double DistR_Ki = 0.00*0.01; 
 double DistR_Kd = 0.00*0.01; 
-double VelR_Kp = 50.000; 
+double VelR_Kp = 20.000; 
 double VelR_Ki = 0.00; 
-double VelR_Kd = 10.00; 
-double VelL_Kp = 50.000; 
+double VelR_Kd = 0.00; 
+double VelL_Kp = 20.000; 
 double VelL_Ki = 0.00; 
-double VelL_Kd = 10.00;
+double VelL_Kd = 0.00;
 
 void setup() {
   Serial.begin(115200);
@@ -73,7 +73,7 @@ void setup() {
 
   delay(1000);
 
-  IMU.begin(300); // 1500 us per cycle
+  IMU.begin(667); // 1500 us per cycle
                   // This controls the update rate of the whole control scheme
   //IMU.SEN.acc_cali_start();
     
@@ -125,11 +125,11 @@ void loop() {
   while( true ){
     //Maintian rate
     // Disabled since the IMU check on OpenCR IMU.update gates the refresh cycle already
-    //    curTime = micros();
-    //    delta = ((double)(lastTime) - (double)(curTime))*0.000001;
-    //    if(delta < 4900){
-    //      delayMicroseconds(2000 - (uint32_t)(delta));
-    //    }
+    curTime = micros();
+    delta = ((double)(curTime) - (double)(lastTime))*0.000001;
+    if(delta < 0.0014){
+      delayMicroseconds( (uint32_t)(1000000*(0.0015 - delta)));
+    }
     
     // Get Time update
     curTime = micros();
@@ -137,7 +137,7 @@ void loop() {
     
     //IMU Update
     if(!(IMU.update() > 0)) {
-      //Serial.println("IMU Read Failure"); // OpenCr fails to read the 
+      // Serial.println("IMU Read Failure"); // OpenCr fails to read the 
       continue;                             // IMU repeatedly before success
     }
     angle = IMU.rpy[1];
