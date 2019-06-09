@@ -45,18 +45,21 @@ const uint8_t handler_index = 0;
 /*******************************************************************************
 * PID loop
 *******************************************************************************/
-double DistL_Kp = 5.00*0.01; 
+// FYI: See the Ziegler–Nichols tuning method: https://en.wikipedia.org/wiki/Ziegler%E2%80%93Nichols_method
+//   or just do manual tuning: https://en.wikipedia.org/wiki/PID_controller#Manual_tuning
+double DistL_Kp = 0.00*0.01; 
 double DistL_Ki = 0.00*0.01; 
 double DistL_Kd = 0.00*0.01; 
-double DistR_Kp = 5.00*0.01; 
+double DistR_Kp = 0.00*0.01; 
 double DistR_Ki = 0.00*0.01; 
 double DistR_Kd = 0.00*0.01; 
-double VelR_Kp = 20.000; 
-double VelR_Ki = 0.00; 
-double VelR_Kd = 0.00; 
-double VelL_Kp = 20.000; 
-double VelL_Ki = 0.00; 
-double VelL_Kd = 0.00;
+double VelR_Kp = 18.000; 
+double VelR_Ki = 4.50; 
+double VelR_Kd = 0.30; 
+double VelL_Kp = 18.000; 
+double VelL_Ki = 4.50; 
+double VelL_Kd = 0.30;
+int angle_adjust_ratio = 10;
 
 void setup() {
   Serial.begin(115200);
@@ -121,15 +124,16 @@ void loop() {
   uint32_t curTime, lastTime = micros();
   
   //do not use outer loop to avoid time delay
-  int count=0;
+  int text_count=0;
+  int angle_count=0;
   while( true ){
     //Maintian rate
     // Disabled since the IMU check on OpenCR IMU.update gates the refresh cycle already
-    curTime = micros();
-    delta = ((double)(curTime) - (double)(lastTime))*0.000001;
-    if(delta < 0.0014){
-      delayMicroseconds( (uint32_t)(1000000*(0.0015 - delta)));
-    }
+//    curTime = micros();
+//    delta = ((double)(curTime) - (double)(lastTime))*0.000001;
+//    if(delta < 0.0014){
+//      delayMicroseconds( (uint32_t)(1000000*(0.0015 - delta)));
+//    }
     
     // Get Time update
     curTime = micros();
@@ -142,19 +146,7 @@ void loop() {
     }
     angle = IMU.rpy[1];
 
-    //Read Present Position
-    if( !(dxl_wb.itemRead(RIGHT_MOTOR, "Present_Position", &raw_position[0], &log) && 
-          dxl_wb.itemRead(LEFT_MOTOR, "Present_Position", &raw_position[1], &log)) ) {
-      Serial.println(log);
-      Serial.println("getSyncReadData fail"); 
-      continue;
-    }
-    cur_dist_right = raw_position[0] - right_wheel_vel*delta;
-    cur_dist_left = raw_position[1] - left_wheel_vel*delta;
-
     //Update PIDs
-    pidAngleR.Compute(delta);
-    pidAngleL.Compute(delta);
     pidVelR.Compute(delta);
     pidVelL.Compute(delta);
 
@@ -167,11 +159,30 @@ void loop() {
       continue;
     }
 
+    //Read Present Position
+    if(angle_count >= angle_adjust_ratio){
+      angle_count = 0;
+      if( !(dxl_wb.itemRead(RIGHT_MOTOR, "Present_Position", &raw_position[0], &log) && 
+            dxl_wb.itemRead(LEFT_MOTOR, "Present_Position", &raw_position[1], &log)) ) {
+        Serial.println(log);
+        Serial.println("getSyncReadData fail"); 
+        continue;
+      }
+      cur_dist_right = raw_position[0] - right_wheel_vel*delta;
+      cur_dist_left = raw_position[1] - left_wheel_vel*delta;
+
+      //Update PIDs
+      pidAngleR.Compute(delta);
+      pidAngleL.Compute(delta);
+    } else {
+      angle_count++;
+    }
+
     // Store Last Time
     lastTime = curTime;
 
     //Send update
-    if(count>200){
+    if(text_count > 200){
       Serial.print(raw_position[0]);
       Serial.print(" \t");
       Serial.print(raw_position[1]);
@@ -187,8 +198,11 @@ void loop() {
       Serial.print(angle);
       Serial.print(" \t");
       Serial.println(delta*1000000);
-      count=0;
+      Serial.print(" \t");
+      Serial.println(((double)(micros()) - (double)(curTime)));
+      text_count=0;
+    } else {
+      text_count ++;
     }
-    count++;
   }
 }
