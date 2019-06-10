@@ -47,12 +47,12 @@ const uint8_t handler_index = 0;
 *******************************************************************************/
 // FYI: See the Ziegler–Nichols tuning method: https://en.wikipedia.org/wiki/Ziegler%E2%80%93Nichols_method
 //   or just do manual tuning: https://en.wikipedia.org/wiki/PID_controller#Manual_tuning
-double DistL_Kp = 1.00*0.01; 
-double DistL_Ki = 20.00*0.01; 
-double DistL_Kd = 0.00*0.0001; 
-double DistR_Kp = 1.00*0.01; 
-double DistR_Ki = 20.00*0.01; 
-double DistR_Kd = 0.00*0.0001; 
+double DistL_Kp = 10.00*0.001; 
+double DistL_Ki = -10.00*0.001; 
+double DistL_Kd = 0.00*0.001; 
+double DistR_Kp = 10.00*0.001; 
+double DistR_Ki = -10.00*0.001; 
+double DistR_Kd = 0.00*0.001; 
 /*
 double DistL_Kp = 1.00*0.01; 
 double DistL_Ki = 20.00*0.01; 
@@ -67,7 +67,7 @@ double VelR_Kd = 0.30;
 double VelL_Kp = 18.000; 
 double VelL_Ki = 4.50; 
 double VelL_Kd = 0.30;
-int angle_adjust_ratio = 10;
+int angle_adjust_ratio = 1;
 
 void setup() {
   Serial.begin(115200);
@@ -135,17 +135,14 @@ void loop() {
   int text_count=0;
   int angle_count=0;
   while( true ){
-    //Maintian rate
-    // Disabled since the IMU check on OpenCR IMU.update gates the refresh cycle already
-//    curTime = micros();
-//    delta = ((double)(curTime) - (double)(lastTime))*0.000001;
-//    if(delta < 0.0014){
-//      delayMicroseconds( (uint32_t)(1000000*(0.0015 - delta)));
-//    }
-    
+    // IMU check on OpenCR IMU.update gateways the refresh cycle already    
     // Get Time update
     curTime = micros();
     delta = ((double)(curTime) - (double)(lastTime))*0.000001;
+    if(delta < 0)
+    {
+      delta = 0.0015; //Rollover Protection; takes 49ish days to happen though
+    }
     
     //IMU Update
     if(!(IMU.update() > 0)) {
@@ -153,6 +150,22 @@ void loop() {
       continue;                             // IMU repeatedly before success
     }
     angle = IMU.rpy[1];
+    curTime = micros();
+    delta = ((double)(curTime) - (double)(lastTime))*0.000001;
+    
+
+    //Read Present Position
+    cur_dist_right += (target_vel_right - right_wheel_vel)*delta;
+    cur_dist_left += (target_vel_right - left_wheel_vel)*delta;
+    if(angle_count >= angle_adjust_ratio){
+      angle_count = 0;
+      
+      //Update PIDs
+      pidAngleR.Compute(delta);
+      pidAngleL.Compute(delta);
+    } else {
+      angle_count++;
+    }
 
     //Update PIDs
     pidVelR.Compute(delta);
@@ -165,25 +178,6 @@ void loop() {
       Serial.println(log);
       Serial.println("goalVelocity fail"); 
       continue;
-    }
-
-    //Read Present Position
-    if(angle_count >= angle_adjust_ratio){
-      angle_count = 0;
-      if( !(dxl_wb.itemRead(RIGHT_MOTOR, "Present_Position", &raw_position[0], &log) && 
-            dxl_wb.itemRead(LEFT_MOTOR, "Present_Position", &raw_position[1], &log)) ) {
-        Serial.println(log);
-        Serial.println("getSyncReadData fail"); 
-        continue;
-      }
-      cur_dist_right = raw_position[0] - right_wheel_vel*delta;
-      cur_dist_left = raw_position[1] - left_wheel_vel*delta;
-
-      //Update PIDs
-      pidAngleR.Compute(delta);
-      pidAngleL.Compute(delta);
-    } else {
-      angle_count++;
     }
 
     // Store Last Time
