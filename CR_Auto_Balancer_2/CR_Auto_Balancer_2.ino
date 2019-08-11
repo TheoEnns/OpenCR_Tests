@@ -63,7 +63,9 @@ const uint8_t handler_index = 0;
 //   or just do manual tuning: https://en.wikipedia.org/wiki/PID_controller#Manual_tuning
 double imuAngle = 0;
 double imuAngleLimited = 0;
-double targetTVel = 0;
+double actualTVel = 0;
+double actualRVel = 0;
+double targetRVel = 0;
 double targetRVel = 0;
 double actualTrans = 0;
 double actualTransLimited = 0;
@@ -77,15 +79,15 @@ double motorVel_R = 0;
 double motorVel_L = 0;
 PID pidTrans2Angle(&actualTrans, &targetAngle, &targetTrans,
               0.0, 0.0, 0.0,
-//              1.0, 0.0, 0.5,  // Bad Strategy to use this PID
-              DIRECT, -MAX_WHEEL_SPEED/2, MAX_WHEEL_SPEED/2);
+              1.0, 0.0, 0.0,  // Bad Strategy to use this PID
+              DIRECT, -MAX_WHEEL_SPEED*0.5, MAX_WHEEL_SPEED*0.5);
 PID pidTrans2Vel(&actualTransLimited, &robotVel, &targetTrans,
               0.0, 0.0, 0.0,
-//              100.0, 0.0, 0.5,
+//              1.0, 0.0, 0.005,
               DIRECT, -MAX_WHEEL_SPEED*0.5, MAX_WHEEL_SPEED*0.5);
 PID pidAngle2Vel(&imuAngleLimited, &balanceVel, &targetAngle,
 //              0.0, 0.0, 0.0,
-              50.000, 0.000, 0.000,
+              100.0, 0.0, 0.50,
               DIRECT, -MAX_WHEEL_SPEED, MAX_WHEEL_SPEED);
 
 /*******************************************************************************
@@ -112,7 +114,6 @@ double getDeltaT( uint32_t t_now, uint32_t t_last){
   return ((double)(t_now) - (double)(t_last))*0.000001;
 }
 
-float updatesPerSecond = 500;
 void setup() {
   Serial.begin(115200);
   const char *log;
@@ -128,7 +129,7 @@ void setup() {
 
   delay(1000);
 
-  IMU.begin(updatesPerSecond); // X us per cycle
+  IMU.begin(500); // X us per cycle
                   // This controls the update rate of the whole control scheme
   //IMU.SEN.acc_cali_start();
     
@@ -149,12 +150,11 @@ void setup() {
 }
 
 double signum(double val) {
-    return (0 < val) - (val < 0);
+    return val > 0? 1 : (val < 0? -1 : 0);
 }
 
 void loop() {
   const char *log;
-  float periodicity = 0.004;
 
   //Delay to let IMU stablize
   t_now = micros();
@@ -174,9 +174,10 @@ void loop() {
     imuAngle = IMU.rpy[1]; // (IMU.rpy[1]*1.0 + 1.0)/2.0;
     t_now = micros();
     double delta = getDeltaT( t_now, t_last_angle);
-    if(delta < periodicity)
+    if(delta < 0.004 || delta > 0.01)
       continue;
     t_last_angle = t_now;
+    
 
     // Encoder Update
     if( !(dxl_wb.itemRead(RIGHT_MOTOR, "Present_Position", &raw_position[0], &log) && 
@@ -190,38 +191,25 @@ void loop() {
     last_position[0] = raw_position[0];
     last_position[1] = raw_position[1];
     actualTrans += 0.5 * delta * (velocityR + velocityL) * ENCODER_2_DIST;
-    actualRot += delta * (velocityR - velocityL) * ENCODER_2_PI;   
+    actualRot += delta * (velocityR - velocityL) * ENCODER_2_PI; 
+      
 
-    // Update pidTrans2Angle    
-//    if(fabs(targetTrans - actualTrans) < 20.0) // Eliminate Small Trans Error
-//      actualTransLimited = targetTrans;  
-//    else
-       actualTransLimited = actualTrans*actualTrans*signum(actualTrans);
-//    pidTrans2Angle.Compute(delta); // Disabled as serial PIDs are worse than parrellel
+    // Post process sensor inputs   
+    imuAngleLimited = imuAngle;
+    actualTransLimited = actualTrans*actualTrans*signum(actualTrans);
+    
    
     // Update pidAngle2Veland pidTrans2Vel  
-//    if(fabs(targetAngle - imuAngle) < 0.1) // Eliminate Small Angle Error
-//      imuAngleLimited = targetAngle;
-//    else
-      imuAngleLimited = imuAngle;
+    pidTrans2Angle.Compute(delta); // Disabled as serial PIDs are worse than parrellel
     pidTrans2Vel.Compute(delta);
     pidAngle2Vel.Compute(delta);
+    
 
     // Update Individual Motor Vel
     double rotation = constrain(actualRot/(2*M_PI*300), -100,100);
-    motorVel_R = constrain(balanceVel + robotVel - 0.001*rotation, -MAX_WHEEL_SPEED,MAX_WHEEL_SPEED);
-    motorVel_L = constrain(balanceVel + robotVel + 0.001*rotation, -MAX_WHEEL_SPEED,MAX_WHEEL_SPEED);
+    motorVel_R = constrain(balanceVel + robotVel - 0.01*rotation, -MAX_WHEEL_SPEED,MAX_WHEEL_SPEED);
+    motorVel_L = constrain(balanceVel + robotVel + 0.01*rotation, -MAX_WHEEL_SPEED,MAX_WHEEL_SPEED);
     
-
-    // Nihilate Aggregation on Stability
-//    if(fabs(targetTrans - actualTrans) < 3.0 &&
-//       fabs(targetRot - actualRot) < 0.05 &&
-//       fabs(motorVel_R) < 3.0 &&
-//       fabs(motorVel_L) < 3.0
-//       ) {
-//      actualTrans = 0;
-//      actualRot = 0;
-//    }
 
     //Send Motor Update
     goal_velocity[0] = motorVel_R;
@@ -232,8 +220,17 @@ void loop() {
       continue;
     }
     
+    
     //Send update
     if(t_last_serial - t_now > 200){
+      while(Serial.available()){
+        char input = Serial.read();
+        if(input == '+')
+          targetTrans +=10;
+        else if(input == '-')
+          targetTrans -=10;
+      }
+      
       Serial.print(((double)(micros()) - (double)(t_now)));
       Serial.print(" \t");
       Serial.print(delta*1000000);
@@ -242,10 +239,6 @@ void loop() {
       Serial.print(" \t");
       Serial.print(targetAngle);
       Serial.print("] \t[");
-//      Serial.print(targetTVel);
-//      Serial.print(" \t");
-//      Serial.print(targetRVel);
-//      Serial.print(" \t");
       Serial.print(actualTrans);
       Serial.print(" \t");
       Serial.print(targetTrans);
@@ -255,6 +248,8 @@ void loop() {
       Serial.print(targetRot);
       Serial.print("] \t");
       Serial.print(balanceVel);
+      Serial.print(" \t");
+      Serial.print(robotVel);
       Serial.print(" \t");
       Serial.print(motorVel_R);
       Serial.print(" \t");
